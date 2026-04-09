@@ -1,59 +1,77 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME = "akshithapulaboyina/node-k8s-app"
+    }
+
     stages {
 
-        stage('Checkout from GitHub') {
+        // ✅ Checkout code from GitHub
+        stage('Checkout') {
             steps {
-                git branch: 'master',
-                    url: 'https://github.com/laxmi916/node-k8s-app.git'
+                checkout scm
             }
         }
 
+        // ✅ Install Node.js dependencies
         stage('Install Dependencies') {
             steps {
                 sh 'npm install'
             }
         }
 
+        // ✅ Build Docker Image with BUILD_NUMBER
         stage('Build Docker Image') {
             steps {
-                sh '''
-                docker build -t my-k8s-app:${BUILD_NUMBER} .
-                docker tag my-k8s-app:${BUILD_NUMBER} laxmi916/my-k8s-app:latest
-                '''
+                sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER .'
             }
         }
 
+        // ✅ Push Docker Image to DockerHub
         stage('Push Docker Image') {
             steps {
-                sh 'docker push laxmi916/my-k8s-app:latest'
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+                    sh '''
+                    echo $PASS | docker login -u $USER --password-stdin
+                    docker push $IMAGE_NAME:$BUILD_NUMBER
+                    '''
+                }
             }
         }
 
-        stage('Start Minikube if not running') {
+        // ✅ Stop and Remove Old Container
+        stage('Stop Old Container') {
             steps {
                 sh '''
-                if ! minikube status | grep -q "apiserver: Running"; then
-                    echo "Minikube is not running. Starting now..."
-                    minikube start --driver=docker --memory=2048 --cpus=2
-                fi
+                docker stop node-container || true
+                docker rm node-container || true
                 '''
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        // ✅ Run New Container
+        stage('Run New Container') {
             steps {
                 sh '''
-                # Load latest image into Minikube
-                # minikube image load laxmi916/my-k8s-app:latest
-
-                # Apply manifests
-                minikube kubectl -- apply -f k8s/deployment.yaml
-                minikube kubectl -- apply -f k8s/service.yaml
-                minikube service my-k8s-app-service
+                docker run -d -p 3000:8080 \
+                --name node-container \
+                $IMAGE_NAME:$BUILD_NUMBER
                 '''
             }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Deployment Successful! Container is running."
+        }
+        failure {
+            echo "❌ Deployment Failed! Check logs."
         }
     }
 }
